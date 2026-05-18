@@ -1,0 +1,9 @@
+<디버그>
+PlayerHealth - 체력, 구르기무적
+PlayerStamina - 스태미나
+PlayerLockOn - 락온
+
+WeaponHitbox - 검 히트박스, 데미지
+
+DummyEnemy - 더미 데미지 및 체력
+BossHealth - 보스 체력
