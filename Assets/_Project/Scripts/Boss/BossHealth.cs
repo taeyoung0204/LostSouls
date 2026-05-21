@@ -44,6 +44,14 @@ namespace LostSouls.Boss
 
         private void Awake()
         {
+            // 난이도 배율 적용 — GameSettings 싱글톤이 있으면 maxHealth에 곱함.
+            // GameSettings 없는 경우(테스트용 단일 씬 등)는 기본값 그대로 사용.
+            var settings = LostSouls.Settings.GameSettings.Instance;
+            if (settings != null && settings.CurrentDifficulty != null)
+            {
+                maxHealth *= settings.CurrentDifficulty.bossHealthMultiplier;
+            }
+
             _currentHealth = maxHealth;
         }
 

@@ -24,6 +24,12 @@ namespace LostSouls.Combat
         [Tooltip("히트박스 활성 순간 재생할 파티클. 충격파, 먼지 등.")]
         [SerializeField] private ParticleSystem effectOnEnable;
 
+        [Header("Audio")]
+        [Tooltip("타격 성공 순간 재생할 사운드 셋. 비워두면 무음.")]
+        [SerializeField] private LostSouls.Audio.SoundSet hitSound;
+        [Tooltip("타격음 재생용 AudioSource. 비워두면 같은 GameObject의 AudioSource 자동 탐색.")]
+        [SerializeField] private AudioSource hitAudioSource;
+
         [Header("Debug")]
         [Tooltip("히트/넉백 발생 시 로그 + 기즈모 표시. 필요할 때만 켜라.")]
         [SerializeField] private bool drawDebugInfo = false;
@@ -51,6 +57,10 @@ namespace LostSouls.Combat
             _hitboxCollider = GetComponent<Collider>();
             _hitboxCollider.enabled = false;
             _isActive = false;
+
+            // 타격음용 AudioSource 자동 탐색 (인스펙터에서 안 넣어둔 경우)
+            if (hitAudioSource == null)
+                hitAudioSource = GetComponent<AudioSource>();
         }
 
         public void EnableHitbox()
@@ -175,13 +185,26 @@ namespace LostSouls.Combat
                 }
             }
 
-            // Motion Value 적용: damage * 콤보 타별 배율
+            // Motion Value 적용: damage * 콤보 타별 배율.
+            // damage <= 0이면 TakeDamage 자체를 스킵 — "밀어내기/포이즈 전용" 히트박스 케이스.
+            // 그래도 _alreadyHitTargets에는 추가 (같은 사이클에서 또 처리되는 것 방지).
             float finalDamage = damage * _damageMultiplier;
-            damageable.TakeDamage(finalDamage);
-            _alreadyHitTargets.Add(damageable);
+            if (finalDamage > 0f)
+            {
+                damageable.TakeDamage(finalDamage);
 
-            if (drawDebugInfo)
-                Debug.Log($"[{name}] Hit {other.name} for {finalDamage:F1} damage (base={damage}, x{_damageMultiplier:F2})");
+                // 타격음 재생 (한 번의 EnableHitbox 사이클당 대상 1명당 1회).
+                // damage 0인 케이스에서는 타격음도 어색하므로 같이 스킵.
+                PlayHitSound();
+
+                if (drawDebugInfo)
+                    Debug.Log($"[{name}] Hit {other.name} for {finalDamage:F1} damage (base={damage}, x{_damageMultiplier:F2})");
+            }
+            else if (drawDebugInfo)
+            {
+                Debug.Log($"[{name}] Damage skipped (damage<=0) for {other.name} — knockback/poise only hitbox");
+            }
+            _alreadyHitTargets.Add(damageable);
 
             // 포이즈 데미지 시도 (대상이 IPoiseDamageable이고 무기에 poiseDamage > 0 설정된 경우만)
             // 체력과 독립적으로 적용 — 포이즈 없는 적은 자연스럽게 무시됨.
@@ -211,6 +234,19 @@ namespace LostSouls.Combat
             Gizmos.matrix = transform.localToWorldMatrix;
             Gizmos.DrawWireCube(box.center, box.size);
             Gizmos.matrix = Matrix4x4.identity;
+        }
+
+        /// <summary>
+        /// 타격 성공 시 호출. SoundSet 비어있거나 AudioSource 없으면 조용히 스킵.
+        /// </summary>
+        private void PlayHitSound()
+        {
+            if (hitSound == null || hitAudioSource == null) return;
+            AudioClip clip = hitSound.PickRandomClip();
+            if (clip == null) return;
+
+            hitAudioSource.pitch = hitSound.GetRandomPitch();
+            hitAudioSource.PlayOneShot(clip, hitSound.SafeVolume);
         }
     }
 }

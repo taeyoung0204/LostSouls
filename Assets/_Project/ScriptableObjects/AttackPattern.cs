@@ -3,9 +3,22 @@ using UnityEngine;
 namespace LostSouls.Boss
 {
     /// <summary>
+    /// 페이즈 제한.
+    /// AnyPhase: 항상 사용 가능
+    /// Phase1Only: 페이즈 1 (Roar 전) 에서만 — 보스의 약화 의도, 2페이즈 가면 봉인됨
+    /// Phase2Only: 페이즈 2 (Roar 후) 에서만 — 보스의 진화/강화 패턴
+    /// </summary>
+    public enum PhaseRequirement
+    {
+        AnyPhase,
+        Phase1Only,
+        Phase2Only
+    }
+
+    /// <summary>
     /// 보스 공격 패턴의 추상 베이스.
     ///
-    /// 공통 데이터: 이름 / 사거리 / 가중치
+    /// 공통 데이터: 이름 / 사거리 / 가중치 / 페이즈 제한
     /// 패턴별 행동: Enter / Update / Exit (추상)
     ///
     /// 구현체:
@@ -42,12 +55,30 @@ namespace LostSouls.Boss
         [Tooltip("이 패턴 사용 후 다시 발동 가능해질 때까지 시간 (초). 0이면 쿨다운 없음.")]
         public float cooldownDuration = 0f;
 
+        [Header("Phase Restriction")]
+        [Tooltip("이 패턴이 발동 가능한 페이즈. AnyPhase=항상, Phase1Only=Roar 전, Phase2Only=Roar 후.")]
+        public PhaseRequirement phaseRequirement = PhaseRequirement.AnyPhase;
+
         /// <summary>
         /// 현재 거리에서 이 패턴이 발동 가능한지.
-        /// 구체 클래스에서 추가 조건(체력 트리거 등) override 가능.
+        /// 거리 + 페이즈 조건을 둘 다 통과해야 true.
+        /// 구체 클래스에서 추가 조건 override 가능 — 단 base.IsAvailable 호출로 거리/페이즈 체크 유지.
         /// </summary>
         public virtual bool IsAvailable(BossController boss)
         {
+            // 페이즈 체크
+            switch (phaseRequirement)
+            {
+                case PhaseRequirement.Phase1Only:
+                    if (boss.IsPhase2) return false;
+                    break;
+                case PhaseRequirement.Phase2Only:
+                    if (!boss.IsPhase2) return false;
+                    break;
+                // AnyPhase는 그냥 통과
+            }
+
+            // 거리 체크
             float distance = boss.DistanceToPlayer;
             return distance >= minRange && distance <= maxRange;
         }

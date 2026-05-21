@@ -15,6 +15,8 @@ namespace LostSouls.Player
         [Header("References")]
         [Tooltip("Flinch 발동 위해 같은 GameObject의 PlayerController 참조. 비우면 Awake에서 자동.")]
         [SerializeField] private PlayerController playerController;
+        [Tooltip("피격/사망음 재생용. 비우면 Awake에서 자동 탐색.")]
+        [SerializeField] private PlayerAudio playerAudio;
 
         [Header("Debug")]
         [Tooltip("매 피격/i-frame 토글 로그 + 캡슐 기즈모. 필요할 때만 켜라. 사망 로그는 항상 출력됨.")]
@@ -41,6 +43,8 @@ namespace LostSouls.Player
 
             if (playerController == null)
                 playerController = GetComponent<PlayerController>();
+            if (playerAudio == null)
+                playerAudio = GetComponent<PlayerAudio>();
         }
 
         public void TakeDamage(float damage)
@@ -56,6 +60,16 @@ namespace LostSouls.Player
                 return;
             }
 
+            // 난이도 배율 적용. 현재 게임에서 플레이어가 받는 데미지 출처는 보스뿐이라
+            // bossDamageMultiplier × playerDamageTakenMultiplier 둘 다 여기서 곱셈 합성.
+            // 향후 환경 데미지(가시, 낙하 등) 추가 시 WeaponHitbox에 출처 표시 추가하고 분리 필요.
+            var settings = LostSouls.Settings.GameSettings.Instance;
+            if (settings != null && settings.CurrentDifficulty != null)
+            {
+                var diff = settings.CurrentDifficulty;
+                damage *= diff.bossDamageMultiplier * diff.playerDamageTakenMultiplier;
+            }
+
             _currentHealth -= damage;
 
             if (drawDebugInfo)
@@ -66,6 +80,9 @@ namespace LostSouls.Player
                 Die();
                 return;
             }
+
+            // 피격음 (사망 시는 사망음만, 피격음 안 나도록 — 위 Die() 분기에서 빠짐)
+            if (playerAudio != null) playerAudio.PlayHurt();
 
             // 피격 시 Flinch 발동. PlayerController 내부에서 Knockback/Flinch 중복/무적 등 무시 조건 처리.
             // 이미 Knockback이 발동되는 공격(knockbackForce>0인 WeaponHitbox)이면
@@ -96,12 +113,31 @@ namespace LostSouls.Player
                 Debug.Log($"[Player] i-frame DISABLED");
         }
 
+        /// <summary>
+        /// HP 회복. 포션 시스템에서 매 프레임 호출 (점진 회복).
+        /// 사망 상태에서는 무시. maxHealth 초과 방지.
+        /// </summary>
+        public void Heal(float amount)
+        {
+            if (_isDead) return;
+            if (amount <= 0f) return;
+
+            _currentHealth = Mathf.Min(_currentHealth + amount, maxHealth);
+        }
+
         private void Die()
         {
             _isDead = true;
             _currentHealth = 0f;
 
             Debug.Log($"[Player] Died!");
+
+            // 사망음
+            if (playerAudio != null) playerAudio.PlayDeath();
+
+            // 전투 BGM 페이드아웃 (플레이어 사망 = 전투 종료)
+            if (LostSouls.Audio.AudioManager.Instance != null)
+                LostSouls.Audio.AudioManager.Instance.StopBGM();
 
             // PlayerController에 사망 통지 → Animator 트리거 + 입력 차단
             if (playerController != null)

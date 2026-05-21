@@ -32,6 +32,8 @@ namespace LostSouls.Player
         private PlayerLockOn _lockOn;
         private PlayerHealth _health;
         private PlayerCombat _combat;
+        private PlayerPotion _potion;
+        private PlayerAudio _audio;
 
         // Input values
         private Vector2 _moveInput;
@@ -96,6 +98,11 @@ namespace LostSouls.Player
         private static readonly int HeavyAttackStateHash = Animator.StringToHash("HeavyAttack");
         private static readonly int RollStateHash = Animator.StringToHash("Roll");
         private static readonly int FlinchStateHash = Animator.StringToHash("Flinch");
+        private static readonly int DrinkStateHash = Animator.StringToHash("Drink");
+
+        // Drink State 진행 중 여부 (포션 마시는 모션). PlayerPotion의 phase는 자체 보유.
+        // 여기서는 이동/공격/회피 차단용으로만 사용.
+        private bool _isDrinking;
 
         private void Awake()
         {
@@ -105,6 +112,8 @@ namespace LostSouls.Player
             _lockOn = GetComponent<PlayerLockOn>();
             _health = GetComponent<PlayerHealth>();
             _combat = GetComponent<PlayerCombat>();
+            _potion = GetComponent<PlayerPotion>();
+            _audio = GetComponent<PlayerAudio>();
             _inputActions = new PlayerInputActions();
 
             if (cameraTransform == null && Camera.main != null)
@@ -121,6 +130,7 @@ namespace LostSouls.Player
             _inputActions.Player.LightAttack.performed += OnLightAttack;
             _inputActions.Player.HeavyAttack.performed += OnHeavyAttack;
             _inputActions.Player.Roll.performed += OnRoll;
+            _inputActions.Player.UsePotion.performed += OnUsePotion;
         }
 
         private void OnDisable()
@@ -132,6 +142,7 @@ namespace LostSouls.Player
             _inputActions.Player.LightAttack.performed -= OnLightAttack;
             _inputActions.Player.HeavyAttack.performed -= OnHeavyAttack;
             _inputActions.Player.Roll.performed -= OnRoll;
+            _inputActions.Player.UsePotion.performed -= OnUsePotion;
             _inputActions.Player.Disable();
         }
 
@@ -194,10 +205,23 @@ namespace LostSouls.Player
 
             _isRolling = hash == RollStateHash;
             _isFlinching = hash == FlinchStateHash;
+            _isDrinking = hash == DrinkStateHash;
 
             // State 진입 감지: 새 공격 State에 막 들어온 순간 스태미나를 실제로 소모.
             // 입력 시점이 아니라 모션 시작 시점에 소모 → 비주얼/리소스 타이밍 일치.
             // 콤보 큐잉(입력 → Exit Time 후 transition) 때문에 입력 시점 소모가 부자연스러웠던 문제 해결.
+            //
+            // 동시에 캔슬/콤보 윈도우도 리셋:
+            // - 새 공격 State 진입 = 이전 타의 Recovery 끝남 = 윈도우 닫혀야 함
+            // - 비공격 State로 빠짐 (Locomotion/Roll 등) = 윈도우 의미 없음 → 닫힘
+            // - 클립 안의 Animation Event(EnableHitbox/DisableHitbox/OnComboWindowOpen)가
+            //   각자 적절한 시점에 다시 열어줌 → 안전한 default 닫힘 상태로 초기화.
+            //
+            // Drink State 종료 감지: Drink → 다른 State로 빠지는 순간 PlayerPotion에 통지.
+            // 자연 종료(Recovery 끝나고 Locomotion으로) + 캔슬(회피로 Roll 진입) 둘 다 커버.
+            // Flinch로 빠지는 경우는 Wind-up 단계면 InterruptDrink가 이미 처리, Active/Recovery면
+            // Flinch State 진입과 동시에 EndDrink 호출되어 phase가 None으로 리셋됨.
+            // 단, Active phase에서 Flinch로 빠질 때 회복은 이미 진행분만큼은 적용된 상태라 정상.
             if (hash != _previousStateHash)
             {
                 if (hash == Attack1StateHash || hash == Attack2StateHash || hash == Attack3StateHash)
@@ -208,6 +232,17 @@ namespace LostSouls.Player
                 {
                     _stamina.ConsumeHeavyAttackCost();
                 }
+
+                if (_combat != null)
+                    _combat.ResetWindows();
+
+                // Drink State에서 다른 State로 빠지는 순간 PlayerPotion 정리
+                if (_previousStateHash == DrinkStateHash && hash != DrinkStateHash)
+                {
+                    if (_potion != null)
+                        _potion.EndDrink();
+                }
+
                 _previousStateHash = hash;
             }
         }
@@ -259,6 +294,14 @@ namespace LostSouls.Player
             if (_isFlinching)
             {
                 // Flinch 중에는 이동/회전 모두 차단. 위치 이동 없음 (애니메이션만).
+                _currentSpeed = 0f;
+                return;
+            }
+
+            if (_isDrinking)
+            {
+                // 포션 마시는 중에는 이동/회전 차단. 위치 이동 없음.
+                // 락온 중이라도 회전 안 함 — 마시는 모션이 우선.
                 _currentSpeed = 0f;
                 return;
             }
@@ -332,7 +375,7 @@ namespace LostSouls.Player
 
             float targetAnimSpeed;
 
-            if (_isAttacking || _isRolling || _isBeingKnockedBack || _isFlinching || _moveInput.magnitude < 0.1f)
+            if (_isAttacking || _isRolling || _isBeingKnockedBack || _isFlinching || _isDrinking || _moveInput.magnitude < 0.1f)
                 targetAnimSpeed = 0f;
             else if (isActuallySprinting)
                 targetAnimSpeed = 2f;
@@ -353,7 +396,7 @@ namespace LostSouls.Player
             float targetX = 0f;
             float targetZ = 0f;
 
-            if (_moveInput.magnitude > 0.1f && !_isAttacking && !_isRolling && !_isBeingKnockedBack && !_isFlinching)
+            if (_moveInput.magnitude > 0.1f && !_isAttacking && !_isRolling && !_isBeingKnockedBack && !_isFlinching && !_isDrinking)
             {
                 // 월드 좌표계의 이동 방향 (카메라 기준 입력을 월드로 변환)
                 Vector3 cameraForward = cameraTransform.forward;
@@ -389,9 +432,9 @@ namespace LostSouls.Player
 
         private void OnLightAttack(InputAction.CallbackContext context)
         {
-            // 사망/Roll/Knockback/Flinch 중에는 항상 차단
+            // 사망/Roll/Knockback/Flinch/Drink 중에는 항상 차단
             if (_isDead) return;
-            if (_isRolling || _isBeingKnockedBack || _isFlinching) return;
+            if (_isRolling || _isBeingKnockedBack || _isFlinching || _isDrinking) return;
 
             // 콤보 분기:
             // - 공격 중이고 콤보 윈도우 열려있음 → Combo 트리거 (다음 타로 이어짐)
@@ -420,9 +463,9 @@ namespace LostSouls.Player
         /// </summary>
         private void OnHeavyAttack(InputAction.CallbackContext context)
         {
-            // 사망/공격/회피/넉백/Flinch 중에는 차단. R1 콤보와 달리 강공격 도중 이어짐 없음.
+            // 사망/공격/회피/넉백/Flinch/Drink 중에는 차단. R1 콤보와 달리 강공격 도중 이어짐 없음.
             if (_isDead) return;
-            if (_isAttacking || _isRolling || _isBeingKnockedBack || _isFlinching) return;
+            if (_isAttacking || _isRolling || _isBeingKnockedBack || _isFlinching || _isDrinking) return;
             if (!_stamina.CanHeavyAttack()) return;
             _animator.SetTrigger(HeavyAttackHash);
         }
@@ -430,7 +473,28 @@ namespace LostSouls.Player
         private void OnRoll(InputAction.CallbackContext context)
         {
             if (_isDead) return;
-            if (_isAttacking || _isRolling || _isBeingKnockedBack) return;
+            if (_isRolling || _isBeingKnockedBack) return;
+
+            // 공격 중 회피 캔슬 (다크소울 정석):
+            // - Active(히트박스 ON) 구간 = 캔슬 불가, 어택 트레이드 리스크 보존
+            // - Recovery 구간 (DisableHitbox 이후) = 캔슬 가능
+            // - 콤보 윈도우와 캔슬 윈도우는 독립적임에 주의:
+            //   콤보 윈도우는 타이밍 여유를 위해 Active 중부터 일찍 열리므로,
+            //   "콤보로 잇기는 가능하지만 회피로 끊기는 불가"인 구간이 존재 (정상 동작)
+            // Flinch 중에는 캔슬 가능 (가벼운 피격 → 회피로 빠져나가는 정석 분기)
+            if (_isAttacking)
+            {
+                if (_combat == null || !_combat.IsCancelWindowOpen) return;
+            }
+
+            // Drink 중 회피 캔슬:
+            // - Wind-up/Active phase = 캔슬 불가 (마시는 동안에는 묶임)
+            // - Recovery phase에서 OnPotionCancelWindowOpen 이후 = 캔슬 가능
+            if (_isDrinking)
+            {
+                if (_potion == null || !_potion.IsCancelWindowOpen) return;
+            }
+
             if (!_stamina.TryConsumeRoll()) return;
 
             Vector3 rollDir;
@@ -478,8 +542,25 @@ namespace LostSouls.Player
             _animator.SetTrigger(RollHash);
         }
 
+        /// <summary>
+        /// R키 — HP 포션 사용 (엘든링 스타일 점진 회복).
+        /// PlayerPotion이 모션의 phase 추적 / 차감 / 회복을 모두 담당.
+        /// 여기서는 입력 가드만 본다 — 다른 행동 중에는 시작 자체를 차단.
+        /// </summary>
+        private void OnUsePotion(InputAction.CallbackContext context)
+        {
+            if (_isDead) return;
+            if (_isAttacking || _isRolling || _isBeingKnockedBack || _isFlinching || _isDrinking) return;
+            if (_potion == null) return;
+
+            // 잔량/HP 풀 체크는 PlayerPotion 내부에서 (TryStartDrink가 false 반환)
+            _potion.TryStartDrink();
+        }
+
         private void UpdateStaminaRegen()
         {
+            // Drink 중에는 스태미나 회복 차단하지 않음 (다크소울 정석 — 마시는 동안에도 회복 진행).
+            // 단 공격/회피/넉백/Flinch는 차단.
             bool inAction = _isAttacking || _isRolling || _isBeingKnockedBack || _isFlinching;
             _stamina.SetRegenBlocked(inAction);
         }
@@ -497,6 +578,14 @@ namespace LostSouls.Player
 
             // 무적 중이면 넉백도 무시 (i-frame이 모든 공격 효과를 막아준다)
             if (_health != null && _health.IsInvulnerable) return;
+
+            // Drink 중이라면 phase별 처리:
+            // - Wind-up: InterruptDrink → 포션 미차감
+            // - Active/Recovery: 회복 진행분 유지 (Knockback State 진입과 동시에
+            //   UpdateCombatState가 EndDrink로 phase 정리)
+            // 어느 경우든 Knockback이 강력한 효과라 모션은 덮어씀.
+            if (_potion != null && _potion.CurrentPhase == PlayerPotion.PotionPhase.WindUp)
+                _potion.InterruptDrink();
 
             _isBeingKnockedBack = true;
             _knockbackDirection = direction;
@@ -518,6 +607,12 @@ namespace LostSouls.Player
         /// - 무적 (i-frame) 중
         /// - 이미 Knockback 중 (Knockback이 더 강한 효과라 우선)
         /// - 이미 Flinch 중 (stun lock 방지)
+        ///
+        /// Drink phase별 분기:
+        /// - Wind-up: InterruptDrink 호출 → 포션 미차감, Flinch State로 전환
+        /// - Active: 회복 계속 진행. Flinch State 진입 시점에 UpdateCombatState가 EndDrink 호출 →
+        ///   회복은 진입한 순간까지만 적용됨 (의도된 동작)
+        /// - Recovery: 회복은 이미 종료. Flinch만 발동.
         /// </summary>
         public void TriggerFlinch()
         {
@@ -525,6 +620,11 @@ namespace LostSouls.Player
             if (_health != null && _health.IsInvulnerable) return;
             if (_isBeingKnockedBack) return;
             if (_isFlinching) return;
+
+            // Drink Wind-up phase에서 피격 시 포션 차감 방지.
+            // Active/Recovery phase에서는 호출 안 함 (회복 진행분 유지하기 위해).
+            if (_potion != null && _potion.CurrentPhase == PlayerPotion.PotionPhase.WindUp)
+                _potion.InterruptDrink();
 
             _animator.SetTrigger(FlinchHash);
         }
@@ -544,12 +644,56 @@ namespace LostSouls.Player
             // 진행 중이던 다른 상태 정리 (시각적 깔끔)
             _isBeingKnockedBack = false;
 
+            // Drink 진행 중이었다면 phase 리셋 (회복도 자연 종료)
+            if (_potion != null)
+                _potion.EndDrink();
+
             // 사망 트리거
             _animator.SetTrigger(DieHash);
 
             // 입력 액션 자체 비활성 (안전망 — _isDead 가드와 중복 차단)
             if (_inputActions != null)
                 _inputActions.Player.Disable();
+        }
+
+        // === 외부에서 입력 제어 ===
+
+        /// <summary>
+        /// 외부 시스템(ESC 메뉴 등)이 마우스 입력 전체를 차단/복구.
+        /// 대상 액션: Look (카메라 회전) + LightAttack (좌클릭) + HeavyAttack (우클릭).
+        /// 키보드 액션(Move/Sprint/Roll/UsePotion/LockOn)은 영향 안 받음 — 정상 작동.
+        ///
+        /// Cinemachine이 같은 Look 액션을 직접 참조하는 구조면 카메라 회전도 함께 멈춤.
+        /// _isDead 상태면 무시 (이미 PlayerInputActions 전체가 Disable된 상태).
+        /// </summary>
+        public void SetMouseInputEnabled(bool enabled)
+        {
+            if (_isDead) return;
+            if (_inputActions == null) return;
+
+            if (enabled)
+            {
+                _inputActions.Player.Look.Enable();
+                _inputActions.Player.LightAttack.Enable();
+                _inputActions.Player.HeavyAttack.Enable();
+            }
+            else
+            {
+                _inputActions.Player.Look.Disable();
+                _inputActions.Player.LightAttack.Disable();
+                _inputActions.Player.HeavyAttack.Disable();
+            }
+        }
+
+        // === 사운드 (Animation Event에서 호출) ===
+
+        /// <summary>
+        /// Animation Event: 구르기 사운드.
+        /// Roll 클립의 시작부 (몸이 바닥에 닿는 프레임)에 박는다.
+        /// </summary>
+        public void PlayRollSound()
+        {
+            if (_audio != null) _audio.PlayRoll();
         }
 
         private void HandleKnockback()

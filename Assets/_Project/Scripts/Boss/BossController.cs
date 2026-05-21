@@ -1,5 +1,6 @@
 using UnityEngine;
 using UnityEngine.AI;
+using Unity.Cinemachine;
 using LostSouls.Player;
 
 namespace LostSouls.Boss
@@ -75,6 +76,10 @@ namespace LostSouls.Boss
         [Tooltip("SetDestination 호출 주기.")]
         [SerializeField] private float destinationUpdateInterval = 0.15f;
 
+        [Header("Camera Shake")]
+        [Tooltip("Cinemachine Impulse Source. 같은 GameObject에 붙어있으면 자동 탐색. Poise Break 등에서 카메라 흔듦.")]
+        [SerializeField] private CinemachineImpulseSource impulseSource;
+
         [Header("Debug")]
         [Tooltip("State 전이, 패턴 선택, 페이즈 전환 등 운영 흐름 로그. 필요할 때만 켜라.")]
         [SerializeField] private bool drawDebugInfo = false;
@@ -84,6 +89,8 @@ namespace LostSouls.Boss
         public NavMeshAgent Agent { get; private set; }
         public BossHealth Health { get; private set; }
         public BossPoise Poise { get; private set; }
+        /// <summary>사운드 재생 헬퍼. State에서도 _ctx.Audio로 접근. 비어있으면 무음.</summary>
+        public BossAudio Audio { get; private set; }
         public Transform Player => player;
 
         public float AggroRange => aggroRange;
@@ -116,6 +123,13 @@ namespace LostSouls.Boss
         private bool _hasRoared;       // 이미 포효 끝났는지 (재발동 방지)
         private bool _roarPending;     // 50% 도달했지만 아직 발동 안 함
         private float _roarReadyTime = float.MaxValue;  // 이 시각 이후 발동 가능. MaxValue = 아직 카운트 시작 안 함
+
+        /// <summary>
+        /// 페이즈 2 (Roar 페이즈 전환 완료 후) 진입 여부.
+        /// AttackPattern.IsAvailable에서 페이즈 제한 패턴 필터링에 사용.
+        /// _hasRoared와 동일하지만 의미를 명확히 드러내기 위해 별도 프로퍼티로 노출.
+        /// </summary>
+        public bool IsPhase2 => _hasRoared;
 
         // 다음 공격 가능 시각. 쿨다운 만료 여부 판정에 사용.
         public float NextAttackTime { get; set; }
@@ -236,6 +250,10 @@ namespace LostSouls.Boss
             Agent = GetComponent<NavMeshAgent>();
             Health = GetComponent<BossHealth>();
             Poise = GetComponent<BossPoise>();
+            Audio = GetComponent<BossAudio>();
+
+            if (impulseSource == null)
+                impulseSource = GetComponent<CinemachineImpulseSource>();
 
             // NavMeshAgent 설정
             Agent.speed = chaseSpeed;
@@ -387,6 +405,10 @@ namespace LostSouls.Boss
 
             // Death 애니메이션 발동
             Animator.SetTrigger(DeathTriggerHash);
+
+            // 전투 BGM 페이드아웃 (보스 사망 = 전투 종료)
+            if (LostSouls.Audio.AudioManager.Instance != null)
+                LostSouls.Audio.AudioManager.Instance.StopBGM();
         }
 
         /// <summary>
@@ -781,6 +803,75 @@ namespace LostSouls.Boss
             }
             hitboxes[index].PlayEffect();
         }
+
+        // === 사운드 Animation Event 진입점 ===
+        // 각 공격 클립의 휘두름 정점/충격파/보이스 발동 프레임에 박는다.
+        // BossAudio 컴포넌트가 없거나 ClipBank에 해당 카테고리 비어있으면 조용히 무음.
+
+        /// <summary>가벼운 휘두름 (Vertical/Horizontal/Low Slash 등).</summary>
+        public void PlaySwingLight()
+        {
+            if (Audio != null) Audio.PlaySwingLight();
+        }
+
+        /// <summary>무거운 휘두름 (Slam/Spin/Dash Jump 등).</summary>
+        public void PlaySwingHeavy()
+        {
+            if (Audio != null) Audio.PlaySwingHeavy();
+        }
+
+        /// <summary>발차기 (Kick).</summary>
+        public void PlayKickSound()
+        {
+            if (Audio != null) Audio.PlayKick();
+        }
+
+        /// <summary>충격파 (Dash Jump 착지 등). OnPlayHitboxEffect와 같은 프레임이 자연스러움.</summary>
+        public void PlayShockwaveSound()
+        {
+            if (Audio != null) Audio.PlayShockwave();
+        }
+
+        /// <summary>하울링 (Roar). PhaseTransition 페이즈 전환 시 박는다.</summary>
+        public void PlayRoarSound()
+        {
+            if (Audio != null) Audio.PlayRoar();
+        }
+
+        /// <summary>사망 보이스. Death 클립 시작부에 박는다.</summary>
+        public void PlayDeathSound()
+        {
+            if (Audio != null) Audio.PlayDeath();
+        }
+
+        // === 카메라 셰이크 ===
+
+        /// <summary>
+        /// Cinemachine Impulse 발동 — 모든 ImpulseListener가 부착된 카메라가 흔들림.
+        /// strength: 흔들림 강도 배율 (1.0이 ImpulseSource 인스펙터에 설정된 Default Velocity 그대로).
+        /// 0.5면 절반 강도, 2.0이면 2배. 흔들림 방향/지속시간/감쇠는 ImpulseSource 인스펙터 설정 따름.
+        /// </summary>
+        public void ShakeCamera(float strength = 1f)
+        {
+            if (impulseSource == null) return;
+            impulseSource.GenerateImpulse(strength);
+        }
+
+        // === Animation Event용 셰이크 진입점 (강도 별로 분리) ===
+        // Animation Event는 float 매개변수도 받지만 인스펙터에서 매번 입력하기 번거로워서
+        // 강도별로 메서드 분리. 어느 게 좋은지 인게임에서 비교하기 쉬움.
+
+        /// <summary>약한 셰이크 — 일반 휘두름 임팩트용. 0.3 강도.</summary>
+        public void ShakeCameraLight()  => ShakeCamera(0.3f);
+
+        /// <summary>중간 셰이크 — Slam/Spin 같은 무거운 공격용. 0.6 강도.</summary>
+        public void ShakeCameraMedium() => ShakeCamera(0.6f);
+
+        /// <summary>강한 셰이크 — Dash Jump 충격파, Roar 등 큰 임팩트용. 1.0 강도.</summary>
+        public void ShakeCameraHeavy()  => ShakeCamera(1f);
+
+        /// <summary>최대 셰이크 — 사망 같은 결정적 순간용. 1.5 강도.</summary>
+        public void ShakeCameraMax()    => ShakeCamera(1.5f);
 
         /// <summary>
         /// 모든 히트박스 강제 끄기. Animation Event 누락 등 비정상 종료 대비 안전망.

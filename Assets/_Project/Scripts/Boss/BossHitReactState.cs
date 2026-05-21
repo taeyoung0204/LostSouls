@@ -46,6 +46,20 @@ namespace LostSouls.Boss
             // BigHit 트리거 발동 (Any State → HitReact 전환)
             boss.Animator.SetTrigger(BigHitTriggerHash);
 
+            // Poise Break 순간 사운드 2종 동시 재생:
+            // - 임팩트 (SFX 채널): "Poise가 깨졌다!"는 게임플레이 신호. 묵직한 슬램.
+            // - 신음 (Voice 채널): 보스가 비틀거리는 캐릭터 표현.
+            // AudioSource 분리되어 있어 둘 다 끊김 없이 동시에 들림.
+            if (boss.Audio != null)
+            {
+                boss.Audio.PlayPoiseBreak();
+                boss.Audio.PlayGroan();
+            }
+
+            // 카메라 셰이크 — Poise Break는 가장 임팩트 강한 순간이라 풀강도.
+            // 강도/감쇠는 BossController의 ImpulseSource 인스펙터에서 조절.
+            boss.ShakeCamera(1f);
+
             Debug.Log($"[Boss] === POISE BROKEN — Hit Reacting ===");
         }
 
