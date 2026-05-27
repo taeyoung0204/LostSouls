@@ -190,6 +190,12 @@ namespace LostSouls.UI
             // (단, 보통 씬 전환 시 카메라가 새로 로드되므로 자동 초기화됨. 안전망 차원).
             SetCameraInputComponents(true);
 
+            // 보스 전투 BGM 정지. AudioManager는 DontDestroyOnLoad라 씬 전환에도 살아남아
+            // BGM이 계속 재생되는 버그 방지. 짧은 페이드아웃으로 자연스럽게.
+            // 씬 전환 시간이 짧아도 AudioManager는 다음 씬에서도 살아있어 코루틴이 끝까지 실행됨.
+            if (LostSouls.Audio.AudioManager.Instance != null)
+                LostSouls.Audio.AudioManager.Instance.StopBGM(0.5f);
+
             if (string.IsNullOrEmpty(titleSceneName))
             {
                 Debug.LogError("[PauseMenu] titleSceneName이 비어있음. 인스펙터에서 시작 씬 이름 지정 필요.");

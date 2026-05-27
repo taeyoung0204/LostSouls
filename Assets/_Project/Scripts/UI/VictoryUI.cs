@@ -160,6 +160,11 @@ namespace LostSouls.UI
             Cursor.visible = true;
             Cursor.lockState = CursorLockMode.None;
 
+            // 안전망 — BGM 정지. 보스 사망 시 BossRoomTrigger.HandleBossDeath가 이미 StopBGM 호출하므로
+            // 현재 흐름에선 무음 상태일 가능성 높지만, 향후 BGM 흐름 바뀌어도 TitleScene으로 BGM 따라가지 않게 보호.
+            if (LostSouls.Audio.AudioManager.Instance != null)
+                LostSouls.Audio.AudioManager.Instance.StopBGM(0.5f);
+
             if (string.IsNullOrEmpty(titleSceneName))
             {
                 Debug.LogError("[VictoryUI] titleSceneName이 비어있음. 인스펙터에서 시작 씬 이름 지정 필요.");
