@@ -28,10 +28,15 @@ namespace LostSouls.UI
     /// - 해금 목록 로컬 인덱스: _unlockedDifficulties 기준 (화살표 순환이 쓰는 값)
     /// 둘을 혼동하면 잠긴 난이도가 선택되거나 엉뚱한 난이도로 시작하는 버그 발생.
     ///
+    /// 씬 이름 주의:
+    /// gameSceneName 기본값은 실제 게임 플레이 씬 'TestArena'.
+    /// Build Profiles의 Scene List에 등록된 이름과 정확히 일치해야 함.
+    /// (불일치 시 씬 로드 실패 또는 엉뚱한 씬 로드 → 빌드에서만 크래시 나는 원인이 됨)
+    ///
     /// 사운드:
     /// - Start에서 TitleBGM 재생 시작 (AudioManager 싱글톤 경유, 페이드인).
     /// - 일반 버튼 → uiButtonClick SFX. 난이도 화살표 ◄► → uiArrowToggle SFX.
-    /// - GameScene/Quit 진입 시 StopBGM (페이드아웃) — 보스 BGM과 안 겹치게.
+    /// - 게임 씬/Quit 진입 시 StopBGM (페이드아웃) — 보스 BGM과 안 겹치게.
     /// AudioManager나 ClipBank이 없어도 조용히 무음 동작 (null 안전).
     /// </summary>
     public class TitleMenuController : MonoBehaviour
@@ -67,11 +72,12 @@ namespace LostSouls.UI
         [SerializeField] private Button optionsBackButton;
 
         [Header("Scene")]
-        [Tooltip("난이도 선택 후 로드할 게임 씬 이름. Build Settings에 등록되어 있어야 함.")]
-        [SerializeField] private string gameSceneName = "GameScene";
+        [Tooltip("난이도 선택 후 로드할 게임 플레이 씬 이름. Build Profiles의 Scene List에 등록된 " +
+                 "이름과 정확히 일치해야 함. 현재 프로젝트의 게임 씬은 'TestArena'.")]
+        [SerializeField] private string gameSceneName = "TestArena";
 
         [Header("BGM")]
-        [Tooltip("GameScene 진입 / Quit 시 BGM 페이드아웃 길이(초).")]
+        [Tooltip("게임 씬 진입 / Quit 시 BGM 페이드아웃 길이(초).")]
         [SerializeField] private float bgmFadeOutDuration = 1.0f;
 
         // 해금된 난이도 목록 (난이도 패널 진입 시 갱신). 잠긴 난이도는 제외됨.
@@ -298,7 +304,7 @@ namespace LostSouls.UI
             }
 
             // 타이틀 BGM 페이드아웃 — AudioManager가 DontDestroyOnLoad라 씬 전환 후에도
-            // 페이드 코루틴 계속 돌아감. GameScene의 보스 BGM과 겹치지 않게 미리 꺼둠.
+            // 페이드 코루틴 계속 돌아감. 게임 씬의 보스 BGM과 겹치지 않게 미리 꺼둠.
             if (AudioManager.Instance != null)
                 AudioManager.Instance.StopBGM(bgmFadeOutDuration);
 
