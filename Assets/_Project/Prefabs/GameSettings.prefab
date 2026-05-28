@@ -47,6 +47,7 @@ MonoBehaviour:
   availableDifficulties:
   - {fileID: 11400000, guid: bb6366456c902434ea077df6e9772732, type: 2}
   - {fileID: 11400000, guid: dacc541e70d090f4eb455a41dcaf2aed, type: 2}
+  - {fileID: 11400000, guid: 73cd87f705b792740affb33a095d8945, type: 2}
   defaultDifficultyIndex: 1
   defaultMasterVolume: 0.8
   defaultBGMVolume: 0.6

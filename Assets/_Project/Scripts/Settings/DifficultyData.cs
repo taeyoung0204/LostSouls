@@ -8,16 +8,31 @@ namespace LostSouls.Settings
     ///
     /// 게임 시작 시 GameSettings.CurrentDifficulty가 이 데이터를 참조.
     /// 각 게임 시스템(BossHealth/PlayerHealth/PlayerPotion 등)이 GameSettings에서 읽어 자기 값에 곱한다.
+    ///
+    /// 해금 시스템:
+    /// - requiresNormalClear가 true인 난이도는 Normal 클리어 전까지 잠김.
+    /// - GameSettings.GetUnlockedDifficulties()가 잠긴 난이도를 걸러서 반환.
+    /// - TitleScene 난이도 선택은 해금된 목록만 순환 (잠긴 건 안 보임).
     /// </summary>
     [CreateAssetMenu(fileName = "DifficultyData", menuName = "LostSouls/Difficulty Data")]
     public class DifficultyData : ScriptableObject
     {
         [Header("Identity")]
-        [Tooltip("UI에 표시될 이름 (예: Easy, Normal, Hard).")]
+        [Tooltip("UI에 표시될 이름 (예: Easy, Normal, Nightmare).")]
         public string difficultyName = "Normal";
         [Tooltip("UI 설명 (예: '도전적인 난이도. 정석 다크소울 경험.').")]
         [TextArea(2, 4)]
         public string description = "";
+        [Tooltip("TitleScene 난이도 선택에서 이름 텍스트에 적용할 색. " +
+                 "기본 흰색. Nightmare 같은 특수 난이도는 보라색 등으로 강조 가능. " +
+                 "이름 텍스트에만 적용되고 설명 텍스트는 영향 없음. Alpha는 보통 1로.")]
+        public Color nameColor = Color.white;
+
+        [Header("Unlock")]
+        [Tooltip("Normal 클리어가 있어야 해금되는 난이도인지 여부. " +
+                 "Nightmare.asset만 true로 설정. Easy/Normal은 false(항상 해금). " +
+                 "true면 PlayerPrefs 'LostSouls.NormalCleared'가 1일 때만 선택 가능.")]
+        public bool requiresNormalClear = false;
 
         [Header("Boss Multipliers")]
         [Tooltip("보스 최대 HP 배율. 1.0이 기본, 0.7이면 30% 약화, 1.3이면 30% 강화.")]

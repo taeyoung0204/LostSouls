@@ -125,5 +125,12 @@ namespace LostSouls.Audio
         [Tooltip("메뉴/패널 '닫힘' SFX. PauseMenu, TutorialPanel 닫힐 때 공유. " +
                  "open과 다른 가벼운 'tap' 느낌 권장 — 열기/닫기 톤이 달라야 UX가 풍부.")]
         public SoundSet uiMenuClose;
+
+        [Header("Unlock Signal")]
+        [Tooltip("Normal 최초 클리어로 Nightmare 난이도가 해금되는 순간, VICTORY 화면 위에 재생되는 " +
+                 "불길한 포효 사운드. 2D UI 사운드로 화면 전체 울림. " +
+                 "보스 포효(bossRoar)와 구분되는 '새로운 강한 존재가 깨어나는' 느낌의 묵직한 소리 권장. " +
+                 "최초 해금 1회만 재생. 비워두면 무음.")]
+        public SoundSet nightmareUnlockRoar;
     }
 }

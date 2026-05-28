@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.SceneManagement;
 using UnityEngine.UI;
@@ -16,12 +17,19 @@ namespace LostSouls.UI
     /// - optionsPanel: 옵션 (볼륨 슬라이더)
     ///
     /// 난이도 선택 UX:
-    /// 좌/우 화살표 버튼으로 GameSettings.AvailableDifficulties 순환.
-    /// 현재 선택 인덱스를 _selectedDifficultyIndex에 보관, UI에 이름/설명 갱신.
-    /// 시작 버튼 클릭 시 GameSettings에 저장 + GameScene 로드.
+    /// 좌/우 화살표 버튼으로 '해금된' 난이도만 순환 (GameSettings.GetUnlockedDifficulties()).
+    /// 잠긴 난이도(Nightmare, Normal 클리어 전)는 목록에 안 나타남 — 화살표로도 도달 불가.
+    /// 현재 선택을 _unlockedDifficulties 리스트의 로컬 인덱스(_selectedUnlockedIndex)로 관리.
+    /// 시작 시 선택된 DifficultyData를 전체 배열에서 찾아 그 인덱스로 GameSettings.SetDifficulty.
+    /// 난이도 이름 텍스트는 DifficultyData.nameColor로 색칠 (Nightmare는 보라색 등 강조).
+    ///
+    /// 난이도 인덱스 두 종류 주의:
+    /// - 전체 배열 인덱스: GameSettings.AvailableDifficulties 기준 (SetDifficulty/CurrentDifficultyIndex가 쓰는 값)
+    /// - 해금 목록 로컬 인덱스: _unlockedDifficulties 기준 (화살표 순환이 쓰는 값)
+    /// 둘을 혼동하면 잠긴 난이도가 선택되거나 엉뚱한 난이도로 시작하는 버그 발생.
     ///
     /// 사운드:
-    /// - Awake에서 TitleBGM 재생 시작 (AudioManager 싱글톤 경유, 페이드인).
+    /// - Start에서 TitleBGM 재생 시작 (AudioManager 싱글톤 경유, 페이드인).
     /// - 일반 버튼 → uiButtonClick SFX. 난이도 화살표 ◄► → uiArrowToggle SFX.
     /// - GameScene/Quit 진입 시 StopBGM (페이드아웃) — 보스 BGM과 안 겹치게.
     /// AudioManager나 ClipBank이 없어도 조용히 무음 동작 (null 안전).
@@ -43,9 +51,9 @@ namespace LostSouls.UI
         [SerializeField] private Button leftArrowButton;
         [Tooltip("난이도 선택 영역의 우측 화살표 (►).")]
         [SerializeField] private Button rightArrowButton;
-        [Tooltip("현재 선택된 난이도 이름 표시 (예: 'Easy').")]
+        [Tooltip("현재 선택된 난이도 이름 표시 (예: 'Easy'). 색은 DifficultyData.nameColor로 적용됨.")]
         [SerializeField] private TextMeshProUGUI difficultyNameText;
-        [Tooltip("현재 선택된 난이도 설명 표시 (DifficultyData.description).")]
+        [Tooltip("현재 선택된 난이도 설명 표시 (DifficultyData.description). 색은 고정 (nameColor 영향 없음).")]
         [SerializeField] private TextMeshProUGUI difficultyDescriptionText;
 
         [Header("Difficulty Panel - Buttons")]
@@ -66,8 +74,10 @@ namespace LostSouls.UI
         [Tooltip("GameScene 진입 / Quit 시 BGM 페이드아웃 길이(초).")]
         [SerializeField] private float bgmFadeOutDuration = 1.0f;
 
-        // 난이도 선택 상태 (난이도 패널 열려있을 때 화살표로 변경됨)
-        private int _selectedDifficultyIndex;
+        // 해금된 난이도 목록 (난이도 패널 진입 시 갱신). 잠긴 난이도는 제외됨.
+        private List<DifficultyData> _unlockedDifficulties = new List<DifficultyData>();
+        // 위 리스트 내 현재 선택 인덱스 (전체 배열 인덱스 아님 — 해금 목록 로컬 인덱스).
+        private int _selectedUnlockedIndex;
 
         private void Awake()
         {
@@ -124,7 +134,7 @@ namespace LostSouls.UI
 
         /// <summary>
         /// 일반 버튼 클릭 SFX. AudioManager/ClipBank/SoundSet 어디든 비어있으면 무음.
-        /// 작업 2번(ESC 메뉴 사운드)에서도 동일 ClipBank 필드 공유 사용 예정.
+        /// ESC 메뉴(PauseMenu) 버튼과 동일 ClipBank 필드 공유.
         /// </summary>
         private void PlayButtonClick()
         {
@@ -154,16 +164,8 @@ namespace LostSouls.UI
         {
             SetPanel(difficultyPanel);
 
-            // 난이도 패널 열 때마다 마지막 저장 값으로 초기화 (PlayerPrefs에서 로드된 값).
-            // 사용자가 옵션에서 난이도 변경한 적 있으면 그 값부터 시작.
-            if (GameSettings.Instance != null)
-            {
-                _selectedDifficultyIndex = GameSettings.Instance.CurrentDifficultyIndex;
-            }
-            else
-            {
-                _selectedDifficultyIndex = 0;
-            }
+            // 해금된 난이도 목록 갱신 (Normal 클리어 여부 등 최신 상태 반영).
+            RefreshUnlockedDifficulties();
 
             UpdateDifficultyDisplay();
         }
@@ -182,53 +184,72 @@ namespace LostSouls.UI
 
         // ========== 난이도 선택 ==========
 
+        /// <summary>
+        /// 해금된 난이도 목록을 GameSettings에서 다시 받아오고,
+        /// 현재 선택을 마지막 저장 난이도(있으면)에 맞춰 초기화.
+        /// 난이도 패널 진입 시마다 호출 — 직전 게임에서 Normal 클리어했으면 Nightmare가 새로 나타남.
+        /// </summary>
+        private void RefreshUnlockedDifficulties()
+        {
+            _unlockedDifficulties.Clear();
+
+            if (GameSettings.Instance == null)
+            {
+                _selectedUnlockedIndex = 0;
+                return;
+            }
+
+            _unlockedDifficulties = GameSettings.Instance.GetUnlockedDifficulties();
+
+            if (_unlockedDifficulties.Count == 0)
+            {
+                _selectedUnlockedIndex = 0;
+                return;
+            }
+
+            // 마지막으로 저장된 난이도를 해금 목록에서 찾아 그 위치를 초기 선택으로.
+            // (옵션에서 난이도 바꾼 적 있으면 그 값부터 시작. 못 찾으면 0.)
+            DifficultyData saved = GameSettings.Instance.CurrentDifficulty;
+            int found = (saved != null) ? _unlockedDifficulties.IndexOf(saved) : -1;
+            _selectedUnlockedIndex = (found >= 0) ? found : 0;
+        }
+
         /// <summary>좌측 화살표 — 이전 난이도. 첫 번째에서 누르면 마지막으로 wrap.</summary>
         private void SelectPreviousDifficulty()
         {
-            int count = GetDifficultyCount();
+            int count = _unlockedDifficulties.Count;
             if (count <= 0) return;
 
-            _selectedDifficultyIndex = (_selectedDifficultyIndex - 1 + count) % count;
+            _selectedUnlockedIndex = (_selectedUnlockedIndex - 1 + count) % count;
             UpdateDifficultyDisplay();
         }
 
         /// <summary>우측 화살표 — 다음 난이도. 마지막에서 누르면 첫 번째로 wrap.</summary>
         private void SelectNextDifficulty()
         {
-            int count = GetDifficultyCount();
+            int count = _unlockedDifficulties.Count;
             if (count <= 0) return;
 
-            _selectedDifficultyIndex = (_selectedDifficultyIndex + 1) % count;
+            _selectedUnlockedIndex = (_selectedUnlockedIndex + 1) % count;
             UpdateDifficultyDisplay();
         }
 
-        private int GetDifficultyCount()
-        {
-            if (GameSettings.Instance == null) return 0;
-            var diffs = GameSettings.Instance.AvailableDifficulties;
-            return diffs != null ? diffs.Length : 0;
-        }
-
-        /// <summary>현재 _selectedDifficultyIndex에 해당하는 난이도 이름/설명을 UI에 반영.</summary>
+        /// <summary>
+        /// 현재 _selectedUnlockedIndex에 해당하는 난이도 이름/설명을 UI에 반영.
+        /// 이름 텍스트에는 DifficultyData.nameColor를 적용 (Nightmare 보라색 등 강조).
+        /// 설명 텍스트는 색을 건드리지 않음 (인스펙터 지정 색 그대로).
+        /// </summary>
         private void UpdateDifficultyDisplay()
         {
-            if (GameSettings.Instance == null)
-            {
-                if (difficultyNameText != null) difficultyNameText.text = "(no GameSettings)";
-                if (difficultyDescriptionText != null) difficultyDescriptionText.text = "";
-                return;
-            }
-
-            var diffs = GameSettings.Instance.AvailableDifficulties;
-            if (diffs == null || diffs.Length == 0)
+            if (_unlockedDifficulties == null || _unlockedDifficulties.Count == 0)
             {
                 if (difficultyNameText != null) difficultyNameText.text = "(no difficulties)";
                 if (difficultyDescriptionText != null) difficultyDescriptionText.text = "";
                 return;
             }
 
-            int idx = Mathf.Clamp(_selectedDifficultyIndex, 0, diffs.Length - 1);
-            DifficultyData data = diffs[idx];
+            int idx = Mathf.Clamp(_selectedUnlockedIndex, 0, _unlockedDifficulties.Count - 1);
+            DifficultyData data = _unlockedDifficulties[idx];
             if (data == null)
             {
                 if (difficultyNameText != null) difficultyNameText.text = "(null)";
@@ -236,8 +257,15 @@ namespace LostSouls.UI
                 return;
             }
 
-            if (difficultyNameText != null) difficultyNameText.text = data.difficultyName;
-            if (difficultyDescriptionText != null) difficultyDescriptionText.text = data.description;
+            if (difficultyNameText != null)
+            {
+                difficultyNameText.text = data.difficultyName;
+                // 난이도별 이름 색 적용. nameColor 기본값은 흰색(Easy/Normal),
+                // Nightmare는 보라색 등으로 인스펙터에서 지정.
+                difficultyNameText.color = data.nameColor;
+            }
+            if (difficultyDescriptionText != null)
+                difficultyDescriptionText.text = data.description;
         }
 
         // ========== 게임 시작 ==========
@@ -245,13 +273,22 @@ namespace LostSouls.UI
         /// <summary>화살표로 고른 난이도로 게임 시작.</summary>
         private void StartGameWithSelected()
         {
-            if (GameSettings.Instance != null)
+            if (GameSettings.Instance != null && _unlockedDifficulties != null && _unlockedDifficulties.Count > 0)
             {
-                GameSettings.Instance.SetDifficulty(_selectedDifficultyIndex);
+                int idx = Mathf.Clamp(_selectedUnlockedIndex, 0, _unlockedDifficulties.Count - 1);
+                DifficultyData chosen = _unlockedDifficulties[idx];
+
+                // 선택된 DifficultyData를 전체 배열에서 찾아 그 인덱스로 저장.
+                // 해금 목록 로컬 인덱스 ≠ 전체 배열 인덱스라 변환 필요.
+                int globalIndex = FindGlobalIndex(chosen);
+                if (globalIndex >= 0)
+                    GameSettings.Instance.SetDifficulty(globalIndex);
+                else
+                    Debug.LogWarning("[TitleMenu] 선택한 난이도를 전체 배열에서 못 찾음. 저장 스킵.");
             }
             else
             {
-                Debug.LogWarning("[TitleMenu] GameSettings.Instance가 없음. 난이도 저장 스킵하고 씬 로드.");
+                Debug.LogWarning("[TitleMenu] GameSettings 없음 또는 해금 난이도 없음. 난이도 저장 스킵하고 씬 로드.");
             }
 
             if (string.IsNullOrEmpty(gameSceneName))
@@ -268,10 +305,26 @@ namespace LostSouls.UI
             SceneManager.LoadScene(gameSceneName);
         }
 
+        /// <summary>
+        /// DifficultyData가 GameSettings.AvailableDifficulties 전체 배열에서 몇 번째인지 반환.
+        /// 못 찾으면 -1.
+        /// </summary>
+        private int FindGlobalIndex(DifficultyData data)
+        {
+            if (GameSettings.Instance == null || data == null) return -1;
+            var all = GameSettings.Instance.AvailableDifficulties;
+            if (all == null) return -1;
+
+            for (int i = 0; i < all.Length; i++)
+            {
+                if (all[i] == data) return i;
+            }
+            return -1;
+        }
+
         private void QuitGame()
         {
             // 종료 직전 BGM 정지 (Editor에서 Stop 안 눌러도 잔여 사운드 안 남게).
-            // 빌드된 .exe는 어차피 프로세스 종료라 무의미하지만 안전망.
             if (AudioManager.Instance != null)
                 AudioManager.Instance.StopBGM(0.3f);
 
