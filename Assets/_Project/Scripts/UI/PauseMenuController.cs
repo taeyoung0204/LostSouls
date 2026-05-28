@@ -4,6 +4,7 @@ using UnityEngine.SceneManagement;
 using UnityEngine.UI;
 using UnityEngine.InputSystem;
 using LostSouls.Player;
+using LostSouls.Audio;
 
 namespace LostSouls.UI
 {
@@ -12,29 +13,51 @@ namespace LostSouls.UI
     ///
     /// 핵심 결정사항:
     /// - 게임 일시정지 X (Time.timeScale 변경하지 않음). 보스 계속 공격.
+    ///   → 이 디자인 의도 때문에 메뉴 열기/닫기 SFX는 사용하지 않음. 게임이 '멈춤'을
+    ///     알리는 사운드는 부적절. 버튼 클릭 SFX만 사용 (TitleScene과 일관).
     /// - 마우스 입력 전체 차단 (Look + LightAttack + HeavyAttack).
-    ///   → 메뉴 위에서 클릭만 가능. 카메라 회전/공격 불가.
     /// - 키보드 입력은 정상 작동 (WASD/Sprint/Roll/UsePotion/LockOn).
-    ///   → 플레이어는 메뉴 띄운 채로 이동/회피/포션 계속 가능.
     /// - 메뉴 닫을 때 마우스 커서 다시 잠금/숨김.
-    /// - 메뉴 구성: Resume (닫기) / Return to Title.
+    ///
+    /// 메뉴 구성 (2단 패널 구조 — TitleScene 패턴과 동일):
+    /// - MainPanel: Resume / Options / Return to Title
+    /// - OptionsPanel: 볼륨 슬라이더 (OptionsPanelController) + Back
+    /// 두 패널은 PauseMenuPanel 안의 자식 GameObject. Show○○SubPanel()로 토글.
+    ///
+    /// ESC 동작:
+    /// - 메뉴 닫혀있음 → ESC = 메뉴 열기 (MainPanel)
+    /// - 메인 패널 중 → ESC = 메뉴 전체 닫기
+    /// - 옵션 패널 중 → ESC = 메뉴 전체 즉시 닫기 (MainPanel로 단계 복귀하지 않음 — 사용자 요청)
     ///
     /// 플레이어가 사망 상태일 때는 ESC 무시 (GameOverUI가 우선).
     ///
     /// 차단 방식 2중:
     /// - PlayerController.SetMouseInputEnabled(false): Look/LightAttack/HeavyAttack 비활성
     /// - 카메라의 CinemachineInputAxisController 컴포넌트 enabled=false (안전망)
-    /// 둘 중 하나만 효과적이어도 카메라 회전 멈춤. Cinemachine 버전/설정에 따라 작동 방식 다를 수 있어 둘 다 처리.
     /// </summary>
     public class PauseMenuController : MonoBehaviour
     {
-        [Header("UI")]
-        [Tooltip("메뉴 패널 (배경 + 버튼들). 시작 시 비활성 상태여야 함.")]
+        [Header("UI - Root")]
+        [Tooltip("메뉴 패널 전체 (배경 + MainPanel + OptionsPanel). 시작 시 비활성 상태여야 함.")]
         [SerializeField] private GameObject menuPanel;
+
+        [Header("UI - Sub Panels")]
+        [Tooltip("메인 메뉴 패널 (Resume / Options / Return to Title). 메뉴 열 때 항상 이게 활성.")]
+        [SerializeField] private GameObject mainSubPanel;
+        [Tooltip("옵션 패널 (볼륨 슬라이더 + Back). 평소 비활성, Options 버튼 클릭 시 활성.")]
+        [SerializeField] private GameObject optionsSubPanel;
+
+        [Header("Main Sub Panel - Buttons")]
         [Tooltip("Resume 버튼 — 메뉴 닫고 게임으로 복귀.")]
         [SerializeField] private Button resumeButton;
+        [Tooltip("Options 버튼 — 옵션 패널로 전환.")]
+        [SerializeField] private Button optionsButton;
         [Tooltip("타이틀로 돌아가기 버튼.")]
         [SerializeField] private Button returnToTitleButton;
+
+        [Header("Options Sub Panel - Buttons")]
+        [Tooltip("옵션 패널에서 메인 패널로 돌아가는 버튼.")]
+        [SerializeField] private Button optionsBackButton;
 
         [Header("References")]
         [Tooltip("입력 차단할 PlayerController. 비우면 씬에서 자동 검색.")]
@@ -67,15 +90,21 @@ namespace LostSouls.UI
             if (playerHealth == null)
                 playerHealth = FindAnyObjectByType<PlayerHealth>();
 
-            // 시작 상태: 메뉴 닫혀있음
+            // 시작 상태: 메뉴 전체 비활성
             if (menuPanel != null)
                 menuPanel.SetActive(false);
 
-            // 버튼 이벤트
+            // 버튼 이벤트 — 람다로 묶어서 SFX 먼저, 동작 후.
+            // SFX는 PlayOneShot이라 동작이 씬 전환을 동반해도 이미 재생 시작된 상태로 안전.
             if (resumeButton != null)
-                resumeButton.onClick.AddListener(Close);
+                resumeButton.onClick.AddListener(() => { PlayButtonClick(); Close(); });
+            if (optionsButton != null)
+                optionsButton.onClick.AddListener(() => { PlayButtonClick(); ShowOptionsSubPanel(); });
             if (returnToTitleButton != null)
-                returnToTitleButton.onClick.AddListener(ReturnToTitle);
+                returnToTitleButton.onClick.AddListener(() => { PlayButtonClick(); ReturnToTitle(); });
+
+            if (optionsBackButton != null)
+                optionsBackButton.onClick.AddListener(() => { PlayButtonClick(); ShowMainSubPanel(); });
 
             // ESC 키 액션 자체 정의 — 플레이어 InputActions와 독립적으로 작동
             _menuToggleAction = new InputAction(name: "MenuToggle", type: InputActionType.Button,
@@ -115,6 +144,8 @@ namespace LostSouls.UI
             // 사망 상태면 무시 (GameOverUI가 자동 복귀 처리 중)
             if (playerHealth != null && playerHealth.IsDead) return;
 
+            // ESC = 즉시 메뉴 전체 토글. 옵션 패널 중이어도 메인으로 단계 복귀하지 않고 바로 닫음.
+            // (사용자 요청 — 게임이 안 멈추는 디자인이라 메뉴를 빨리 닫고 게임으로 돌아가는 게 더 중요)
             if (_isOpen) Close();
             else Open();
         }
@@ -131,6 +162,9 @@ namespace LostSouls.UI
                 _mousePositionBeforeMenu = Mouse.current.position.ReadValue();
 
             if (menuPanel != null) menuPanel.SetActive(true);
+
+            // 메뉴 열 땐 항상 메인 패널부터. 이전에 옵션 패널 상태로 닫혔어도 다시 열면 메인이 우선.
+            ShowMainSubPanel();
 
             // 마우스 입력 전체 차단 (Look/LightAttack/HeavyAttack). 키보드는 그대로.
             if (playerController != null) playerController.SetMouseInputEnabled(false);
@@ -166,6 +200,22 @@ namespace LostSouls.UI
             SetCameraInputComponents(true);
         }
 
+        // ========== 서브 패널 전환 ==========
+
+        /// <summary>메인 서브 패널 활성, 옵션 서브 패널 비활성.</summary>
+        private void ShowMainSubPanel()
+        {
+            if (mainSubPanel != null) mainSubPanel.SetActive(true);
+            if (optionsSubPanel != null) optionsSubPanel.SetActive(false);
+        }
+
+        /// <summary>옵션 서브 패널 활성, 메인 서브 패널 비활성.</summary>
+        private void ShowOptionsSubPanel()
+        {
+            if (mainSubPanel != null) mainSubPanel.SetActive(false);
+            if (optionsSubPanel != null) optionsSubPanel.SetActive(true);
+        }
+
         private void SetCameraInputComponents(bool enabled)
         {
             if (cameraInputComponentsToDisable == null) return;
@@ -193,8 +243,8 @@ namespace LostSouls.UI
             // 보스 전투 BGM 정지. AudioManager는 DontDestroyOnLoad라 씬 전환에도 살아남아
             // BGM이 계속 재생되는 버그 방지. 짧은 페이드아웃으로 자연스럽게.
             // 씬 전환 시간이 짧아도 AudioManager는 다음 씬에서도 살아있어 코루틴이 끝까지 실행됨.
-            if (LostSouls.Audio.AudioManager.Instance != null)
-                LostSouls.Audio.AudioManager.Instance.StopBGM(0.5f);
+            if (AudioManager.Instance != null)
+                AudioManager.Instance.StopBGM(0.5f);
 
             if (string.IsNullOrEmpty(titleSceneName))
             {
@@ -203,6 +253,19 @@ namespace LostSouls.UI
             }
 
             SceneManager.LoadScene(titleSceneName);
+        }
+
+        // ========== 사운드 헬퍼 ==========
+
+        /// <summary>
+        /// 일반 버튼 클릭 SFX. TitleMenu/OptionsPanel과 ClipBank 필드 공유 (uiButtonClick).
+        /// AudioManager/ClipBank/SoundSet 어디든 null이면 무음으로 안전 동작.
+        /// </summary>
+        private void PlayButtonClick()
+        {
+            if (AudioManager.Instance == null) return;
+            if (AudioManager.Instance.ClipBank == null) return;
+            AudioManager.Instance.PlayUISound(AudioManager.Instance.ClipBank.uiButtonClick);
         }
     }
 }

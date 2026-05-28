@@ -107,5 +107,23 @@ namespace LostSouls.Audio
         [Tooltip("보스 사망 즉시 (HP 0이 되는 순간) 재생되는 임팩트 사운드. " +
                  "2D UI 사운드로 화면 전체 울림. 다크소울/엘든링 풍 '결정타' 효과.")]
         public SoundSet bossDefeated;
+
+        [Header("Title / UI Sounds")]
+        [Tooltip("타이틀 화면 BGM. 루프되는 트랙 권장. TitleScene 진입 시 자동 재생, " +
+                 "GameScene 진입 시 페이드아웃. 비워두면 무음.")]
+        public AudioClip titleBGM;
+        [Tooltip("일반 버튼 클릭 SFX. 타이틀의 모든 일반 버튼(Start/Options/Quit/Back/Reset 등) " +
+                 "과 ESC 메뉴 버튼(Resume/Return to Title)에서 공유 사용. " +
+                 "피치 랜덤 0.05~0.1 권장 (반복 시 똑같이 들리는 거 회피).")]
+        public SoundSet uiButtonClick;
+        [Tooltip("난이도 선택 화살표 ◄ ► 토글 SFX. 일반 버튼과 다른 가벼운 'tick' 느낌의 소리 권장. " +
+                 "(같은 클릭 사운드 써도 무방하지만 분리하면 UX가 더 풍부.)")]
+        public SoundSet uiArrowToggle;
+        [Tooltip("메뉴/패널 '열림' SFX. PauseMenu(ESC) 열 때, TutorialPanel(표지판 E) 열 때 공유. " +
+                 "묵직한 'whoosh/스윽' 느낌 권장. 다크소울 시리즈의 메뉴 열기 톤.")]
+        public SoundSet uiMenuOpen;
+        [Tooltip("메뉴/패널 '닫힘' SFX. PauseMenu, TutorialPanel 닫힐 때 공유. " +
+                 "open과 다른 가벼운 'tap' 느낌 권장 — 열기/닫기 톤이 달라야 UX가 풍부.")]
+        public SoundSet uiMenuClose;
     }
 }

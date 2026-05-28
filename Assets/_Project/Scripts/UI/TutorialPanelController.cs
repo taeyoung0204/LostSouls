@@ -18,6 +18,8 @@ namespace LostSouls.UI
     /// 4. 마우스 위치 원복 (메뉴 열기 전 자리로 워프) + 입력 복구
     ///
     /// PauseMenu와 동일 패턴 — 게임 일시정지 X, 보스 계속 공격, 카메라만 멈춤.
+    /// 게임이 안 멈추는 디자인이라 패널 열기/닫기 SFX는 사용하지 않음 (PauseMenu와 일관).
+    /// 닫기 버튼도 별도 SFX 없음 — 닫기는 명시적 의도라 굳이 사운드로 강조할 필요 없음.
     /// </summary>
     public class TutorialPanelController : MonoBehaviour
     {

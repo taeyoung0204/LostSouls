@@ -2,6 +2,7 @@ using UnityEngine;
 using UnityEngine.UI;
 using TMPro;
 using LostSouls.Settings;
+using LostSouls.Audio;
 
 namespace LostSouls.UI
 {
@@ -11,10 +12,15 @@ namespace LostSouls.UI
     /// 동작:
     /// - OnEnable: GameSettings에서 현재 값 읽어 슬라이더 동기화
     /// - 슬라이더 변경 시: GameSettings.SetXxxVolume → PlayerPrefs 저장 + AudioMixer 즉시 반영
-    /// - Reset: GameSettings.ResetToDefaults + 슬라이더 다시 동기화
+    /// - Reset: GameSettings.ResetToDefaults + 슬라이더 다시 동기화 + uiButtonClick SFX
     ///
     /// TitleScene + ESC 메뉴 양쪽에서 재사용 가능하도록 독립 컴포넌트로 분리.
-    /// Prefab으로 빼면 ESC 메뉴에서도 그대로 쓸 수 있음.
+    /// Prefab으로 빼면 ESC 메뉴에서도 그대로 쓸 수 있음. (작업 2번에서 활용 예정)
+    ///
+    /// 사운드 처리 위치 결정 근거:
+    /// Reset 버튼의 onClick은 이 컨트롤러가 등록하므로 SFX도 여기서 호출.
+    /// TitleMenuController에 처리 떠넘기면 onClick 이중 등록되어 Reset이 두 번 실행되는 문제 발생.
+    /// 슬라이더 onValueChanged에는 SFX 안 붙임 — 드래그 중 계속 울리면 거슬림 + 미리듣기 효과 자체로 충분.
     /// </summary>
     public class OptionsPanelController : MonoBehaviour
     {
@@ -116,10 +122,27 @@ namespace LostSouls.UI
 
         private void OnResetClicked()
         {
+            // 사운드 먼저 — Reset 처리가 무거워도 SFX는 이미 PlayOneShot으로 발사된 상태.
+            // AudioManager/ClipBank/SoundSet 어디든 null이면 무음으로 안전 동작.
+            PlayButtonClick();
+
             if (GameSettings.Instance == null) return;
 
             GameSettings.Instance.ResetToDefaults();
             SyncSlidersFromSettings();
+        }
+
+        // ========== 사운드 ==========
+
+        /// <summary>
+        /// 일반 버튼 클릭 SFX. TitleMenuController와 동일한 ClipBank 필드 공유.
+        /// 작업 2번 ESC 메뉴 Prefab 재사용 시에도 자동으로 따라감.
+        /// </summary>
+        private void PlayButtonClick()
+        {
+            if (AudioManager.Instance == null) return;
+            if (AudioManager.Instance.ClipBank == null) return;
+            AudioManager.Instance.PlayUISound(AudioManager.Instance.ClipBank.uiButtonClick);
         }
 
         // ========== 헬퍼 ==========
